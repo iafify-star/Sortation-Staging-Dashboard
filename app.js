@@ -545,6 +545,10 @@ function renderStaging() {
         [["0–2 ساعة", fmt(n("release_0_2_qty"))], ["2–4 ساعات", fmt(n("release_2_4_qty"))], ["أكتر من 4", fmt(n("release_gt4_qty"))]]),
       mcCard("Pending Staging Qty", fmt(n("staging_qty")), null, "", [`${fmt(n("staging_ds"))} DS`, `${fmt(n("staging_totes"))} Totes`],
         [["0–2 ساعة", fmt(n("staging_0_2_qty"))], ["2–4 ساعات", fmt(n("staging_2_4_qty"))], ["أكتر من 4", fmt(n("staging_gt4_qty"))]]),
+      // Staged so far today = the totes now in staging locations (Pending Release); out of those plus the ones still waiting.
+      mcCard("Staged Totes · اتعمل استيدج", fmt(n("release_totes")), pct(n("release_totes"), n("release_totes") + n("staging_totes")), "good",
+        [`من ${fmt(n("release_totes") + n("staging_totes"))} توت`, `فاضل ${fmt(n("staging_totes"))} توت`],
+        [["اتعمل (قطع)", fmt(n("release_qty"))], ["فاضل (قطع)", fmt(n("staging_qty"))]]),
       mcCard("Expected Load", fmt(n("expected_load")), null, "", [],
         [["في السورتنج", fmt(n("load_in_sorting"))], ["في الدروب زون", fmt(n("load_in_dropzone"))], ["في البيكينج", fmt(n("load_in_picking"))]]),
     ].join("")
