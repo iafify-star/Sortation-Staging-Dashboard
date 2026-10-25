@@ -1,0 +1,4 @@
+# The hourly sync scripts and the Apps Script hold the web app URL and its token, which can overwrite the
+# STAGE sheet's tabs. They stay on this machine only.
+sync/
+apps-script/

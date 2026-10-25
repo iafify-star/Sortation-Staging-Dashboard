@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#ffe900">
+    <meta name="description" content="متابعة مباشرة للسورتنج باتش والاكس دوك والاستيدج.">
+    <link rel="icon" type="image/png" href="assets/noon-minutes-logo.png">
+    <title>نون مينتس | السورتشن والاستيدج</title>
+    <script>try { if (localStorage.getItem("stageTheme") === "light") document.documentElement.dataset.theme = "light"; } catch (error) {}</script>
+    <link rel="stylesheet" href="styles.css?v=15">
+    <script src="app.js?v=16" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="التنقل الرئيسي">
+        <a class="brand" href="#batch">
+          <img class="brand-logo" src="assets/noon-minutes-logo.png" alt="نون مينتس">
+          <span class="brand-copy"><strong>noon<span> minutes</span></strong><small>السورتشن والاستيدج</small></span>
+        </a>
+        <div class="nav-label">لوحة المتابعة</div>
+        <nav class="main-nav">
+          <a class="nav-link active" href="#batch" data-page="batch"><span class="nav-icon">⇅</span><span>السورتنج باتش</span></a>
+          <a class="nav-link" href="#xdock" data-page="xdock"><span class="nav-icon">⇄</span><span>السورتشن اكس دوك</span></a>
+          <a class="nav-link" href="#staging" data-page="staging"><span class="nav-icon">▦</span><span>الاستيدج</span></a>
+          <a class="nav-link" href="#hourly" data-page="hourly"><span class="nav-icon">◷</span><span>تقرير بالساعة</span></a>
+        </nav>
+        <div class="sidebar-spacer"></div>
+        <div class="source-card">
+          <span class="source-icon">▤</span>
+          <div><strong>مصدر البيانات</strong><small>Google Sheets · STAGE</small></div>
+          <span class="source-dot" id="sourceDot"></span>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb"><span>السورتشن والاستيدج</span><b>/</b><strong id="pageTitle">السورتنج باتش</strong></div>
+          <div class="topbar-actions">
+            <span class="sync-text" id="syncText">بيحمّل…</span>
+            <button class="icon-button" id="themeButton" type="button" title="الوضع النهاري">☀</button>
+            <button class="icon-button" id="refreshButton" type="button" title="تحديث">↻</button>
+          </div>
+        </header>
+
+        <div class="error-banner" id="errorBanner" hidden></div>
+
+        <!-- Sorting batch -->
+        <section class="page" id="page-batch">
+          <div class="page-head">
+            <div>
+              <h1>السورتنج باتش</h1>
+              <p>كل المخازن · الكونتينرات اللي اتبيكت باتش ومستنية تتفرز على الفروع</p>
+            </div>
+            <div class="filters">
+              <label class="select"><span>المخزن</span><select id="batchWh"></select></label>
+              <div class="chips" id="batchShift" role="group" aria-label="الشيفت">
+                <button type="button" class="chip active" data-shift="all">كل اليوم</button>
+                <button type="button" class="chip" data-shift="night">ليل 02–08</button>
+                <button type="button" class="chip" data-shift="morning">صباحي 08–17</button>
+                <button type="button" class="chip" data-shift="middle">ميدل 17–02</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mc-grid four" id="batchKpis"></div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>حالة كل مخزن</h2><small>الكميات بالقطعة · الكونتينرات بين قوسين</small></div>
+            <div class="table-wrap"><table id="batchWhTable"></table></div>
+          </div>
+
+          <div class="split">
+            <div class="panel">
+              <div class="panel-head"><h2>القطع اللي اتفرزت كل ساعة</h2><small>حسب وقت قفل الجوب</small></div>
+              <div class="bars" id="batchHourly"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>البندينج مستني بقاله قد إيه</h2><small>من وقت إنشاء الجوب لحد دلوقتي</small></div>
+              <div class="table-wrap"><table id="batchAging"></table></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>إنتاجية السورترز</h2><small>الجوبز المقفولة في الشيفت المختار · الساعة = مجموع وقت الجوبز من البداية للقفل</small></div>
+            <div class="table-wrap"><table id="batchSorters"></table></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>الجوبز</h2>
+              <div class="panel-tools">
+                <div class="chips" id="batchStatus">
+                  <button type="button" class="chip active" data-status="all">الكل</button>
+                  <button type="button" class="chip" data-status="pending">بندينج</button>
+                  <button type="button" class="chip" data-status="in_progress">إن بروجرس</button>
+                  <button type="button" class="chip" data-status="closed">كلوز</button>
+                </div>
+                <input class="search" id="batchSearch" type="search" placeholder="دوّر بالجوب أو الكونتينر أو السورتر">
+                <button class="ghost-button" id="batchExport" type="button">⬇ Excel</button>
+              </div>
+            </div>
+            <div class="table-wrap tall"><table id="batchJobs"></table></div>
+            <div class="table-foot" id="batchJobsFoot"></div>
+          </div>
+        </section>
+
+        <!-- Cross dock -->
+        <section class="page" id="page-xdock" hidden>
+          <div class="page-head">
+            <div>
+              <h1>السورتشن اكس دوك</h1>
+              <p>Source Warehouse CAIID06 و CAIID07 · البندينج والإن بروجرس والكلوز</p>
+            </div>
+            <div class="filters">
+              <label class="select"><span>المخزن</span><select id="xdockWh"></select></label>
+              <label class="select"><span>اليوم</span><select id="xdockDay"></select></label>
+              <label class="select"><span>من</span><input id="xdockFrom" type="time"></label>
+              <label class="select"><span>لحد</span><input id="xdockTo" type="time"></label>
+              <button class="ghost-button" id="xdockTimeReset" type="button">كل الوقت</button>
+            </div>
+          </div>
+
+          <div class="kpi-grid" id="xdockKpis"></div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>كل مخزن: عملنا كام وفاضل كام</h2><small>الكميات بالقطعة</small></div>
+            <div class="table-wrap"><table id="xdockWhTable"></table></div>
+          </div>
+
+          <div class="split">
+            <div class="panel">
+              <div class="panel-head"><h2>إنتاجية اليوزرز</h2><small>الجوبز اللي اشتغلوا عليها</small></div>
+              <div class="table-wrap"><table id="xdockUsers"></table></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>حسب الـ ASN</h2><small>كل شحنة واصلة وحالتها</small></div>
+              <div class="table-wrap"><table id="xdockAsn"></table></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>الجوبز</h2>
+              <div class="panel-tools">
+                <div class="chips" id="xdockStatus">
+                  <button type="button" class="chip active" data-status="all">الكل</button>
+                  <button type="button" class="chip" data-status="pending">بندينج</button>
+                  <button type="button" class="chip" data-status="in_progress">إن بروجرس</button>
+                  <button type="button" class="chip" data-status="closed">كلوز</button>
+                </div>
+                <input class="search" id="xdockSearch" type="search" placeholder="دوّر بالجوب أو الكونتينر أو الباركود">
+                <button class="ghost-button" id="xdockExport" type="button">⬇ Excel</button>
+              </div>
+            </div>
+            <div class="table-wrap tall"><table id="xdockJobs"></table></div>
+          </div>
+        </section>
+
+        <!-- Hourly report -->
+        <section class="page" id="page-hourly" hidden>
+          <div class="page-head">
+            <div>
+              <h1>تقرير بالساعة</h1>
+              <p>عملنا كام كل ساعة · اختار اليوم ومن الساعة كام لحد الساعة كام</p>
+            </div>
+            <div class="filters">
+              <label class="select"><span>المخزن</span><select id="hourlyWh"></select></label>
+              <label class="select"><span>اليوم</span><select id="hourlyDay"></select></label>
+              <label class="select"><span>من الساعة</span><select id="hourlyFrom"></select></label>
+              <label class="select"><span>لحد الساعة</span><select id="hourlyTo"></select></label>
+              <button class="ghost-button" id="hourlyExport" type="button">⬇ Excel</button>
+            </div>
+          </div>
+
+          <div class="mc-grid" id="hourlyKpis"></div>
+
+          <div class="panel">
+            <div class="panel-head"><h2 id="hourlyTitle">كل ساعة</h2><small>سورت باتش حسب وقت قفل الجوب · اكس دوك حسب وقت بداية الجوب · الاستيدج من تسجيل كل ساعة</small></div>
+            <div class="table-wrap tall"><table id="hourlyTable"></table></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>IPP لكل شخص</h2>
+              <div class="panel-tools">
+                <div class="chips" id="ippKind">
+                  <button type="button" class="chip active" data-kind="batch">السورتنج باتش</button>
+                  <button type="button" class="chip" data-kind="xdock">الاكس دوك</button>
+                </div>
+                <button class="ghost-button" id="ippExport" type="button">⬇ Excel</button>
+              </div>
+            </div>
+            <div class="table-foot" id="ippNote"></div>
+            <div class="table-wrap tall"><table id="ippTable"></table></div>
+          </div>
+        </section>
+
+        <!-- Staging -->
+        <section class="page" id="page-staging" hidden>
+          <div class="page-head">
+            <div>
+              <h1>الاستيدج</h1>
+              <p>من Minutes Central · الكميات بالقطعة · اتعمل = اللي اتحط في لوكيشن استيدج · فاضل = Pending Staging (لسه في الدروب زون)</p>
+            </div>
+            <div class="filters">
+              <label class="select"><span>المخزن</span><select id="stagingWh"></select></label>
+            </div>
+          </div>
+
+          <div class="mc-head"><h2>Staging Summary</h2><small id="stagingSummaryTime"></small></div>
+          <div class="mc-grid" id="stagingSummary"></div>
+
+          <div class="kpi-grid three" id="stagingKpis"></div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>كل مخزن: اتعمل استيدج كام وفاضل كام</h2><small>الكميات بالقطعة</small></div>
+            <div class="table-wrap"><table id="stagingWhTable"></table></div>
+          </div>
+
+          <div class="split">
+            <div class="panel">
+              <div class="panel-head"><h2>حسب الفرع</h2><small>الكميات بالقطعة</small></div>
+              <div class="table-wrap"><table id="stagingStores"></table></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>الفاضل بقاله قد إيه</h2><small>من وقت ما اتحط في الدروب زون</small></div>
+              <div class="table-wrap"><table id="stagingAging"></table></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>التوتات الفاضلة (Pending Staging)</h2>
+              <div class="panel-tools">
+                <input class="search" id="stagingSearch" type="search" placeholder="دوّر بالتوت أو الفرع أو اللي حطه">
+                <button class="ghost-button" id="stagingExport" type="button">⬇ Excel</button>
+              </div>
+            </div>
+            <div class="table-wrap tall"><table id="stagingTotes"></table></div>
+            <div class="table-foot" id="stagingFoot"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
