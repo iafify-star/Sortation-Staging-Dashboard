@@ -177,3 +177,15 @@ tfoot td { font-weight: 800; background: var(--surface-2); }
 @media (max-width: 860px) { .mc-grid, .mc-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .who { display: block; color: var(--muted); font: 500 11px "Inter", sans-serif; }
+
+/* Targets and alerts */
+td.hit, span.hit { color: var(--green); }
+td.miss, span.miss { color: var(--red); }
+td.hit b, td.miss b { color: inherit; }
+.target-row td { color: var(--muted); font-size: 11.5px; background: var(--surface-2); }
+.alerts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 14px; }
+.alert { display: grid; gap: 4px; padding: 11px 14px; border: 1px solid var(--border); border-inline-start: 4px solid var(--amber); border-radius: 12px; background: var(--surface); }
+.alert.hot { border-inline-start-color: var(--red); background: #f04b540d; }
+.alert b { font-size: 13px; }
+.alert span { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.alert:hover { border-color: var(--yellow); }

@@ -16,6 +16,14 @@ const TABS = {
 // Names come from the NIM attendance sheet (CAIID01 tab): its IDs (MAK01980M) share their first 8 characters with the
 // system usernames (mak01980mus), so that prefix links a username to a person.
 const STAFF_URL = "https://docs.google.com/spreadsheets/d/1GaMh4GIfanzEvJYpbtvuVLpawERz_-kRzSrWyqovpXs/export?format=csv&gid=11379924";
+// Targets and alert limits live in the sheet's settings tab (key, value) so they can be changed without touching the code.
+const SETTINGS_GID = "680532657";
+const DEFAULT_SETTINGS = {
+  target_batch_qty_per_hour: 2500, target_xdock_lines_per_hour: 400, target_staging_totes_per_hour: 150,
+  target_ipp_batch: 600, target_ipp_xdock: 200, target_ipp_staging: 20,
+  alert_pending_staging_hours: 4, alert_pending_release_hours: 4, alert_batch_pending_hours: 4, alert_xdock_pending_hours: 6, alert_job_loss_qty: 50,
+};
+const setting = (key) => (Number.isFinite(state.settings[key]) ? state.settings[key] : DEFAULT_SETTINGS[key]);
 const REFRESH_MS = 60000;
 const ROW_LIMIT = 500;
 
@@ -28,6 +36,7 @@ const state = {
   xdock: [],
   staging: [],
   staff: new Map(),
+  settings: {},
   loadedAt: null,
   batchWh: "main",
   batchShift: "all",
@@ -156,6 +165,11 @@ async function load() {
   button.classList.add("spin");
   try {
     if (!state.staff.size) loadStaff();
+    fetchCsv(SETTINGS_GID).then(({ records }) => {
+      const settings = {};
+      records.forEach((r) => { const v = Number(String(r.value).replace(/,/g, "")); if (r.key && Number.isFinite(v)) settings[r.key.trim()] = v; });
+      state.settings = settings;
+    }).catch(() => {});
     const [batch, xdock, ...staging] = await Promise.all([
       fetchCsv(TABS.batch),
       fetchCsv(TABS.xdock),
@@ -744,25 +758,58 @@ function renderHourly() {
   const fromMidnight = !fromLog && upTo && !before && lo > 0;
   const stagedDay = dayShots.length ? dayShots[dayShots.length - 1].staged : 0;
   const stagingLeft = latest ? latest.left : 0;
-  const card = (label, done, unit, left, dayDone, extra) => mcCard(label, done == null ? "—" : fmt(done), dayDone + left ? pct(dayDone, dayDone + left) : null, "good",
+  // A process's target runs from its first working hour in the range to its last one (to now on today, where the
+  // running hour counts for the part gone by), so hours before a shift starts do not count against it.
+  const now = cairoNow();
+  const isToday = state.hourlyDay === dayKey(now);
+  const span = (key) => {
+    const worked = rows.filter((r) => r[key]).map((r) => r.h);
+    return worked.length ? [Math.min(...worked), Math.max(...worked)] : [99, -1];
+  };
+  const spans = { batchQty: span("batchQty"), xdockQty: span("xdockQty"), staged: span("staged") };
+  const hoursGone = (key) => {
+    const [a, b] = spans[key];
+    return rows.reduce((s, r) => {
+      if (r.h < a) return s;
+      if (isToday && r.h === hourOf(now)) return s + new Date(now).getUTCMinutes() / 60;
+      if (isToday ? r.h < hourOf(now) : r.h <= b) return s + 1;
+      return s;
+    }, 0);
+  };
+  const targetLine = (done, perHour, unit, key) => {
+    const target = Math.round(perHour * hoursGone(key));
+    if (!target || done == null) return [];
+    const ratio = pct(done, target);
+    return [["تارجت الفترة", `${fmt(target)} ${unit} · ${perHour.toLocaleString("en-US")}/ساعة`], ["من التارجت", `<span class="${ratio >= 100 ? "hit" : "miss"}">${ratio.toFixed(0)}%</span>`]];
+  };
+  const card = (label, done, unit, left, dayDone, extra, perHour, key) => mcCard(label, done == null ? "—" : fmt(done), dayDone + left ? pct(dayDone, dayDone + left) : null, "good",
     [`فاضل دلوقتي: ${fmt(left)}`, `من ${fmt(dayDone + left)}`, range],
-    [["اتعمل في الفترة", done == null ? "مفيش تسجيل" : `${fmt(done)} ${unit}`], ["اتعمل في اليوم كله", `${fmt(dayDone)} ${unit}`], ...extra]);
+    [...targetLine(done, perHour, unit, key), ["اتعمل في الفترة", done == null ? "مفيش تسجيل" : `${fmt(done)} ${unit}`], ["اتعمل في اليوم كله", `${fmt(dayDone)} ${unit}`], ...extra]);
   $("hourlyKpis").innerHTML = [
-    card("Sort Batch · قطع", sum("batchQty"), "قطعة", batchLeft, batchDay, [["PBs فاضلة", fmt(batchOpen.length)]]),
-    card("Sort Cross Dock · لاينز", sum("xdockQty"), "لاين", xdockLeft, xdockDay, [["جوبز فاضلة", fmt(xdockOpen.length)]]),
+    card("Sort Batch · قطع", sum("batchQty"), "قطعة", batchLeft, batchDay, [["PBs فاضلة", fmt(batchOpen.length)]], setting("target_batch_qty_per_hour"), "batchQty"),
+    card("Sort Cross Dock · لاينز", sum("xdockQty"), "لاين", xdockLeft, xdockDay, [["جوبز فاضلة", fmt(xdockOpen.length)]], setting("target_xdock_lines_per_hour"), "xdockQty"),
     stagingScope()
       ? card("Staging · توتات", stagedRange, "توت", stagingLeft, stagedDay, [["آخر تسجيل", latest ? dayClock(latest.at) : "—"],
         ...(fromLog ? [["المصدر", "وقت Staged At لكل توت"]] : []),
-        ...(fromMidnight ? [["تنبيه", `محسوب من 12 بالليل، مفيش تسجيل قبل ${hourLabel(lo)}`]] : [])])
+        ...(fromMidnight ? [["تنبيه", `محسوب من 12 بالليل، مفيش تسجيل قبل ${hourLabel(lo)}`]] : [])], setting("target_staging_totes_per_hour"), "staged")
       : mcCard("Staging · توتات", "—", null, "", ["الاستيدج متسجل لـ CAIID01 و02 و06 بس"]),
   ].join("");
 
   const cell = (v) => (v ? fmt(v) : "—");
+  // A finished hour is green at or above its target and red below it; hours outside a process's working span stay plain.
+  const tone = (r, key, perHour) => {
+    const [a, b] = spans[key];
+    if (r.h < a || r.h > b || !perHour) return "";
+    if (isToday && r.h >= hourOf(now)) return "";
+    return (r[key] || 0) >= perHour ? "hit" : "miss";
+  };
   $("hourlyTable").innerHTML = head(["الساعة", ["سورت باتش (قطع)"], ["PBs اتقفلت"], ["سورت اكس دوك (لاينز)"], ["جوبز اكس دوك"], ["استيدج (توتات)"], ["استيدج (قطع)"], ["استيدج لحد الساعة دي"], "الشيفت"])
+    + `<tr class="target-row"><td>التارجت / ساعة</td><td class="num">${fmt(setting("target_batch_qty_per_hour"))}</td><td></td>
+      <td class="num">${fmt(setting("target_xdock_lines_per_hour"))}</td><td></td><td class="num">${fmt(setting("target_staging_totes_per_hour"))}</td><td></td><td></td><td></td></tr>`
     + `<tbody>${rows.map((r) => `<tr><td class="mono"><b>${hourLabel(r.h)}</b></td>
-      <td class="num"><b>${cell(r.batchQty)}</b></td><td class="num muted">${cell(r.batchJobs)}</td>
-      <td class="num"><b>${cell(r.xdockQty)}</b></td><td class="num muted">${cell(r.xdockJobs)}</td>
-      <td class="num"><b>${r.staged == null ? "—" : fmt(r.staged)}</b></td><td class="num muted">${r.stagedQty ? fmt(r.stagedQty) : "—"}</td>
+      <td class="num ${tone(r, "batchQty", setting("target_batch_qty_per_hour"))}"><b>${cell(r.batchQty)}</b></td><td class="num muted">${cell(r.batchJobs)}</td>
+      <td class="num ${tone(r, "xdockQty", setting("target_xdock_lines_per_hour"))}"><b>${cell(r.xdockQty)}</b></td><td class="num muted">${cell(r.xdockJobs)}</td>
+      <td class="num ${tone(r, "staged", setting("target_staging_totes_per_hour"))}"><b>${r.staged == null ? "—" : fmt(r.staged)}</b></td><td class="num muted">${r.stagedQty ? fmt(r.stagedQty) : "—"}</td>
       <td class="num muted">${r.stagedTotal == null ? "—" : fmt(r.stagedTotal)}</td>
       <td class="muted">${SHIFT_LABELS[shiftOf(Date.UTC(2000, 0, 1, r.h))]}</td></tr>`).join("")}</tbody>`
     + `<tfoot><tr><td>الإجمالي</td><td class="num">${fmt(sum("batchQty"))}</td><td class="num">${fmt(sum("batchJobs"))}</td>
@@ -858,20 +905,81 @@ function renderIpp() {
     : staging
       ? "IPP = توتات في الساعة: التوتات اللي عملها استيدج (Staged By) ÷ وقت شغله (الفرق بين كل توت واللي بعده لو أقل من 30 دقيقة) · من وقت Staged At"
       : "IPP تقريبي: تقرير الاكس دوك مافيهوش وقت القفل، فالجوب بيتحسب لحد ما الشخص يبدأ الجوب اللي بعده (بحد أقصى ساعتين) · الجوبز اللي بدأت في الفترة المختارة";
+  const target = setting(staging ? "target_ipp_staging" : state.ippKind === "batch" ? "target_ipp_batch" : "target_ipp_xdock");
   const valid = rows.filter((r) => r.ipp != null);
   const totalQty = valid.reduce((s, r) => s + (staging ? r.jobs : r.qty), 0);
   const totalHours = valid.reduce((s, r) => s + r.minutes, 0) / 60;
   $("ippTable").innerHTML = rows.length
-    ? head(["#", "الشخص", "المخزن", [staging ? "توتات" : "جوبز"], [unit], ["ساعات الشغل"], [staging ? "IPP (توت/ساعة)" : "IPP"], ["ناقص + سكيب"], "أول ← آخر"])
+    ? head(["#", "الشخص", "المخزن", [staging ? "توتات" : "جوبز"], [unit], ["ساعات الشغل"], [staging ? "IPP (توت/ساعة)" : "IPP"], [`من التارجت (${fmt(target)})`], ["ناقص + سكيب"], "أول ← آخر"])
       + `<tbody>${rows.map((r, i) => `<tr><td class="muted">${i + 1}</td><td>${who(r.name)}</td><td>${esc([...r.wh].sort().join("، "))}</td>
         <td class="num">${fmt(r.jobs)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${duration(r.minutes)}</td>
-        <td class="num"><b style="color:var(--yellow)">${r.ipp == null ? "—" : fmt(r.ipp)}</b></td>
+        <td class="num ${r.ipp == null ? "" : r.ipp >= target ? "hit" : "miss"}"><b>${r.ipp == null ? "—" : fmt(r.ipp)}</b></td>
+        <td class="num">${r.ipp == null ? "—" : pctCell(pct(r.ipp, target))}</td>
         <td class="num ${r.loss ? "age-warm" : "muted"}">${r.loss ? fmt(r.loss) : "—"}</td>
         <td class="mono muted">${clock(r.first)} ← ${clock(r.last)}</td></tr>`).join("")}</tbody>`
       + `<tfoot><tr><td></td><td>المتوسط</td><td></td><td class="num">${fmt(rows.reduce((s, r) => s + r.jobs, 0))}</td>
         <td class="num">${fmt(rows.reduce((s, r) => s + r.qty, 0))}</td><td class="num">${duration(totalHours * 60)}</td>
-        <td class="num"><b>${totalHours ? fmt(totalQty / totalHours) : "—"}</b></td><td class="num">${fmt(rows.reduce((s, r) => s + r.loss, 0))}</td><td></td></tr></tfoot>`
-    : emptyRow(9, staging ? "مفيش توتات اتعملها استيدج في الفترة دي" : "مفيش جوبز مقفولة في الفترة دي");
+        <td class="num"><b>${totalHours ? fmt(totalQty / totalHours) : "—"}</b></td><td class="num">${totalHours ? `${pct(totalQty / totalHours, target).toFixed(0)}%` : "—"}</td>
+        <td class="num">${fmt(rows.reduce((s, r) => s + r.loss, 0))}</td><td></td></tr></tfoot>`
+    : emptyRow(10, staging ? "مفيش توتات اتعملها استيدج في الفترة دي" : "مفيش جوبز مقفولة في الفترة دي");
+}
+
+// ---------- Alerts ----------
+// Late or abnormal work for Minutes Central's three warehouses (cross dock: CAIID06 and CAIID07), limits from settings.
+function alerts() {
+  const now = cairoNow();
+  const hoursSince = (ms) => (now - ms) / 3600000;
+  const list = [];
+  const add = (level, title, detail, page) => list.push({ level, title, detail, page });
+
+  const pendingHours = setting("alert_pending_staging_hours");
+  const oldDrop = stagingData().pending.filter((t) => t.age >= pendingHours);
+  if (oldDrop.length) {
+    const stores = Object.entries(oldDrop.reduce((a, t) => ((a[t.store] = (a[t.store] || 0) + 1), a), {})).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    add("hot", `${fmt(oldDrop.length)} توت في الدروب زون بقالهم أكتر من ${pendingHours} ساعات من غير استيدج`,
+      `${fmt(qtyOf(oldDrop))} قطعة · أقدم توت ${duration(Math.max(...oldDrop.map((t) => t.age)) * 60)} · أكتر فروع: ${stores.map(([s, n]) => `${s} (${n})`).join("، ")}`, "staging");
+  }
+  const summary = (state.staging[2] && state.staging[2].records || []).find((r) => r.scope === "ALL");
+  const releaseOld = summary ? num(summary.release_gt4_qty) : 0;
+  if (releaseOld > 0) add("warm", `${fmt(releaseOld)} قطعة في Pending Release بقالها أكتر من ${setting("alert_pending_release_hours")} ساعات`, "اتعملها استيدج ومستنية تتقفل على بالتة", "staging");
+
+  const batchHours = setting("alert_batch_pending_hours");
+  const oldJobs = state.batch.filter((j) => MAIN_WH.includes(j.wh) && j.status !== "closed" && j.created != null && hoursSince(j.created) >= batchHours);
+  if (oldJobs.length) {
+    const oldest = oldJobs.reduce((a, b) => (b.created < a.created ? b : a));
+    add("hot", `${fmt(oldJobs.length)} جوب سورتنج باتش مستنيين أكتر من ${batchHours} ساعات`,
+      `${fmt(oldJobs.reduce((s, j) => s + j.pending, 0))} قطعة فاضلة · أقدمهم ${oldest.job} في ${oldest.wh} بقاله ${duration(hoursSince(oldest.created) * 60)}`, "batch");
+  }
+  const xdockHours = setting("alert_xdock_pending_hours");
+  const oldX = state.xdock.filter((j) => j.status !== "closed" && j.created != null && hoursSince(j.created) >= xdockHours);
+  if (oldX.length) {
+    const byWh = Object.entries(oldX.reduce((a, j) => ((a[j.wh] = (a[j.wh] || 0) + 1), a), {})).map(([w, n]) => `${w}: ${n}`).join("، ");
+    add("warm", `${fmt(oldX.length)} جوب اكس دوك مستنيين أكتر من ${xdockHours} ساعات`, `${fmt(oldX.reduce((s, j) => s + j.notPut, 0))} لاين فاضلة · ${byWh}`, "xdock");
+  }
+  const lossLimit = setting("alert_job_loss_qty");
+  const lossy = state.batch.filter((j) => MAIN_WH.includes(j.wh) && j.status === "closed" && j.missing + j.skipped >= lossLimit).sort((a, b) => (b.missing + b.skipped) - (a.missing + a.skipped));
+  if (lossy.length) {
+    const name = (u) => (staffOf(u) || {}).name || u || "—";
+    add("hot", `${fmt(lossy.length)} جوب سورتنج اتقفلوا وفيهم ناقص + سكيب ${fmt(lossLimit)} قطعة أو أكتر`,
+      lossy.slice(0, 3).map((j) => `${j.job} · ${name(j.sorter)} · ${fmt(j.missing + j.skipped)} قطعة`).join(" — "), "batch");
+  }
+  // The last finished hour against its target, for the three warehouses together.
+  const lastHour = (hourOf(now) + 23) % 24;
+  if (hourOf(now) > 0) {
+    const today = dayKey(now);
+    const batchDone = state.batch.filter((j) => MAIN_WH.includes(j.wh) && j.status === "closed" && j.completed != null && dayKey(j.completed) === today && hourOf(j.completed) === lastHour).reduce((s, j) => s + j.sorted, 0);
+    const stagedDone = stagedLog().filter((t) => MAIN_WH.includes(t.wh) && dayKey(t.at) === today && hourOf(t.at) === lastHour).length;
+    const misses = [];
+    if (batchDone < setting("target_batch_qty_per_hour")) misses.push(`سورت باتش ${fmt(batchDone)} من ${fmt(setting("target_batch_qty_per_hour"))} قطعة`);
+    if (stagedLog().length && stagedDone < setting("target_staging_totes_per_hour")) misses.push(`استيدج ${fmt(stagedDone)} من ${fmt(setting("target_staging_totes_per_hour"))} توت`);
+    if (misses.length) add("warm", `الساعة ${hourLabel(lastHour)} ماجابتش التارجت`, misses.join(" · "), "hourly");
+  }
+  return list;
+}
+function renderAlerts() {
+  const list = alerts();
+  $("alerts").hidden = !list.length;
+  $("alerts").innerHTML = list.map((a) => `<a class="alert ${a.level}" href="#${a.page}"><b>${esc(a.title)}</b><span>${esc(a.detail)}</span></a>`).join("");
 }
 
 // ---------- Page switching & events ----------
@@ -884,6 +992,7 @@ function render() {
   document.querySelectorAll(".page").forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll(".nav-link").forEach((el) => el.classList.toggle("active", el.dataset.page === page));
   $("pageTitle").textContent = PAGE_TITLES[page];
+  renderAlerts();
   if (page === "batch") renderBatch();
   else if (page === "xdock") renderXdock();
   else if (page === "hourly") renderHourly();
