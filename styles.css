@@ -189,3 +189,7 @@ td.hit b, td.miss b { color: inherit; }
 .alert b { font-size: 13px; }
 .alert span { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .alert:hover { border-color: var(--yellow); }
+
+.rank { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 10px; font-size: 10.5px; font-weight: 700; }
+.rank.top { background: #62d08722; color: var(--green); }
+.rank.low { background: #f04b5422; color: var(--red); }

@@ -27,7 +27,9 @@ const setting = (key) => (Number.isFinite(state.settings[key]) ? state.settings[
 const REFRESH_MS = 60000;
 const ROW_LIMIT = 500;
 
-const PAGE_TITLES = { batch: "السورتنج باتش", xdock: "السورتشن اكس دوك", staging: "الاستيدج", hourly: "تقرير بالساعة" };
+const PAGE_TITLES = { batch: "السورتنج باتش", xdock: "السورتشن اكس دوك", staging: "الاستيدج", stores: "الفروع", hourly: "تقرير بالساعة", archive: "الأرشيف" };
+// The daily archive tabs (one row per day and scope, written by the hourly sync).
+const ARCHIVE_TABS = { mc: "558011844", xdock: "1687922077" };
 const STATUS_LABELS = { pending: "بندينج", in_progress: "إن بروجرس", closed: "كلوز" };
 const SHIFT_LABELS = { night: "ليل", morning: "صباحي", middle: "ميدل" };
 
@@ -48,6 +50,11 @@ const state = {
   hourlyFrom: 0,
   hourlyTo: 23,
   ippKind: "batch",
+  ippShift: "all",
+  storesWh: "main",
+  storesSearch: "",
+  archive: { mc: [], xdock: [] },
+  archiveScope: "ALL",
   stagingSearch: "",
   xdockWh: "all",
   xdockDay: "all",
@@ -148,6 +155,7 @@ function mapBatch(r) {
     total: num(r.total_qty), sorted: num(r.sorted_qty), pending: num(r.pending_qty), missing: num(r.missing_qty), skipped: num(r.skipped_qty),
     created: parseTime(r.job_created_at), started: parseTime(r.job_started_at), completed: parseTime(r.job_completed_at), target: parseTime(r.target_shipped_at),
     destCount: num(r.destination_containers), stores: (r.destination_stores || "").split("|").map((s) => s.trim()).filter(Boolean),
+    split: (r.destination_split || "").split("|").map((pair) => pair.split(":")).filter(([code]) => code).map(([code, qty]) => ({ code, qty: num(qty) })),
   };
 }
 function mapXdock(r) {
@@ -169,6 +177,10 @@ async function load() {
       const settings = {};
       records.forEach((r) => { const v = Number(String(r.value).replace(/,/g, "")); if (r.key && Number.isFinite(v)) settings[r.key.trim()] = v; });
       state.settings = settings;
+    }).catch(() => {});
+    Promise.all([fetchCsv(ARCHIVE_TABS.mc), fetchCsv(ARCHIVE_TABS.xdock)]).then(([mc, xdock]) => {
+      state.archive = { mc: mc.records, xdock: xdock.records };
+      if (currentPage() === "archive") renderArchive();
     }).catch(() => {});
     const [batch, xdock, ...staging] = await Promise.all([
       fetchCsv(TABS.batch),
@@ -834,7 +846,8 @@ function ippRows() {
   const whOk = (wh) => state.hourlyWh === "all" || (state.hourlyWh === "main" ? MAIN_WH.includes(wh) : wh === state.hourlyWh);
   const lo = Math.min(state.hourlyFrom, state.hourlyTo);
   const hi = Math.max(state.hourlyFrom, state.hourlyTo);
-  const inRange = (ms) => ms != null && dayKey(ms) === state.hourlyDay && hourOf(ms) >= lo && hourOf(ms) <= hi;
+  // The shift filter goes by when the work was done (job close, job start or staged time).
+  const inRange = (ms) => ms != null && dayKey(ms) === state.hourlyDay && hourOf(ms) >= lo && hourOf(ms) <= hi && (state.ippShift === "all" || shiftOf(ms) === state.ippShift);
   const people = new Map();
   const person = (name, wh) => {
     if (!people.has(name)) people.set(name, { name, wh: new Set(), jobs: 0, qty: 0, loss: 0, spans: [], first: Infinity, last: -Infinity });
@@ -909,19 +922,109 @@ function renderIpp() {
   const valid = rows.filter((r) => r.ipp != null);
   const totalQty = valid.reduce((s, r) => s + (staging ? r.jobs : r.qty), 0);
   const totalHours = valid.reduce((s, r) => s + r.minutes, 0) / 60;
+  // The five best and five worst of those with an IPP get a badge.
+  const ranked = valid.map((r) => r.name);
+  const badgeOf = (name) => {
+    const i = ranked.indexOf(name);
+    if (i < 0 || ranked.length < 6) return "";
+    if (i < 5) return `<span class="rank top">أحسن ${i + 1}</span>`;
+    if (i >= ranked.length - 5) return `<span class="rank low">أضعف ${ranked.length - i}</span>`;
+    return "";
+  };
   $("ippTable").innerHTML = rows.length
-    ? head(["#", "الشخص", "المخزن", [staging ? "توتات" : "جوبز"], [unit], ["ساعات الشغل"], [staging ? "IPP (توت/ساعة)" : "IPP"], [`من التارجت (${fmt(target)})`], ["ناقص + سكيب"], "أول ← آخر"])
-      + `<tbody>${rows.map((r, i) => `<tr><td class="muted">${i + 1}</td><td>${who(r.name)}</td><td>${esc([...r.wh].sort().join("، "))}</td>
+    ? head(["#", "الشخص", "شيفته", "المخزن", [staging ? "توتات" : "جوبز"], [unit], ["ساعات الشغل"], [staging ? "IPP (توت/ساعة)" : "IPP"], [`من التارجت (${fmt(target)})`], ["ناقص + سكيب"], "أول ← آخر"])
+      + `<tbody>${rows.map((r, i) => `<tr><td class="muted">${i + 1}</td><td>${who(r.name)}${badgeOf(r.name)}</td><td class="muted">${esc((staffOf(r.name) || {}).shift || "—")}</td><td>${esc([...r.wh].sort().join("، "))}</td>
         <td class="num">${fmt(r.jobs)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${duration(r.minutes)}</td>
         <td class="num ${r.ipp == null ? "" : r.ipp >= target ? "hit" : "miss"}"><b>${r.ipp == null ? "—" : fmt(r.ipp)}</b></td>
         <td class="num">${r.ipp == null ? "—" : pctCell(pct(r.ipp, target))}</td>
         <td class="num ${r.loss ? "age-warm" : "muted"}">${r.loss ? fmt(r.loss) : "—"}</td>
         <td class="mono muted">${clock(r.first)} ← ${clock(r.last)}</td></tr>`).join("")}</tbody>`
-      + `<tfoot><tr><td></td><td>المتوسط</td><td></td><td class="num">${fmt(rows.reduce((s, r) => s + r.jobs, 0))}</td>
+      + `<tfoot><tr><td></td><td>المتوسط</td><td></td><td></td><td class="num">${fmt(rows.reduce((s, r) => s + r.jobs, 0))}</td>
         <td class="num">${fmt(rows.reduce((s, r) => s + r.qty, 0))}</td><td class="num">${duration(totalHours * 60)}</td>
         <td class="num"><b>${totalHours ? fmt(totalQty / totalHours) : "—"}</b></td><td class="num">${totalHours ? `${pct(totalQty / totalHours, target).toFixed(0)}%` : "—"}</td>
         <td class="num">${fmt(rows.reduce((s, r) => s + r.loss, 0))}</td><td></td></tr></tfoot>`
-    : emptyRow(10, staging ? "مفيش توتات اتعملها استيدج في الفترة دي" : "مفيش جوبز مقفولة في الفترة دي");
+    : emptyRow(11, staging ? "مفيش توتات اتعملها استيدج في الفترة دي" : "مفيش جوبز مقفولة في الفترة دي");
+}
+
+// ---------- Branches ----------
+// One row per branch (darkstore) for today: units sorted to it, totes staged, totes closed on pallets, totes still in
+// the drop zone and what is still expected. Branch names come from the pallets report, which carries them.
+function renderStores() {
+  const whOk = (wh) => state.storesWh === "all" || (state.storesWh === "main" ? MAIN_WH.includes(wh) : wh === state.storesWh);
+  const warehouses = [...new Set(state.batch.map((j) => j.wh).filter(Boolean))].sort();
+  $("storesWh").innerHTML = `<option value="main">${MAIN_WH.join("، ")}</option><option value="all">كل المخازن</option>${warehouses.map((w) => `<option value="${esc(w)}">${esc(w)}</option>`).join("")}`;
+  $("storesWh").value = state.storesWh;
+  const today = dayKey(cairoNow());
+  const data = stagingData();
+  const names = {};
+  const stores = new Map();
+  const get = (code) => {
+    if (!code) return null;
+    if (!stores.has(code)) stores.set(code, { code, sorted: 0, staged: 0, stagedQty: 0, palletTotes: 0, pallets: new Set(), drop: 0, dropQty: 0, oldest: 0, expected: 0 });
+    return stores.get(code);
+  };
+  ((state.staging[4] && state.staging[4].records) || []).forEach((r) => { if (r.darkstore_code && r.darkstore_name) names[r.darkstore_code] = r.darkstore_name; });
+  state.batch.filter((j) => j.status === "closed" && whOk(j.wh) && j.completed != null && dayKey(j.completed) === today)
+    .forEach((j) => j.split.forEach((s) => { const st = get(s.code); if (st) st.sorted += s.qty; }));
+  data.locations.filter((l) => whOk(l.wh)).forEach((l) => { const st = get(l.store); if (st) { st.staged += l.totes; st.stagedQty += l.qty; } });
+  ((state.staging[0] && state.staging[0].records) || []).filter((r) => whOk(r.warehouse)).forEach((r) => { const st = get(r.darkstore_code); if (st) st.expected += num(r.expected_load_qty); });
+  data.onPallet.filter((t) => whOk(t.wh)).forEach((t) => { const st = get(t.store); if (st) { st.palletTotes += 1; st.pallets.add(t.pallet); } });
+  data.pending.filter((t) => whOk(t.wh)).forEach((t) => { const st = get(t.store); if (st) { st.drop += 1; st.dropQty += t.qty; st.oldest = Math.max(st.oldest, t.age); } });
+  const q = state.storesSearch.toLowerCase();
+  const rows = [...stores.values()].filter((s) => !q || `${s.code} ${names[s.code] || ""}`.toLowerCase().includes(q))
+    .sort((a, b) => b.drop - a.drop || b.expected - a.expected || a.code.localeCompare(b.code));
+  const total = (key) => rows.reduce((s, r) => s + (key === "pallets" ? r.pallets.size : r[key]), 0);
+  $("storesKpis").innerHTML = [
+    mcCard("الفروع", fmt(rows.length), null, "", [`${fmt(rows.filter((r) => r.drop).length)} فرع ليه توتات في الدروب زون`]),
+    mcCard("اتفرز النهارده", fmt(total("sorted")), null, "", ["قطع · سورت باتش"]),
+    mcCard("اتعمله استيدج", fmt(total("staged")), null, "", [`منهم على بالتات ${fmt(total("palletTotes"))} توت`, `${fmt(total("pallets"))} بالتة`]),
+    mcCard("لسه في الدروب زون", fmt(total("drop")), null, "", [`${fmt(total("dropQty"))} قطعة`, `لسه جاي ${fmt(total("expected"))} قطعة`]),
+  ].join("");
+  const hot = setting("alert_pending_staging_hours");
+  $("storesTable").innerHTML = rows.length
+    ? head(["الفرع", "الاسم", ["اتفرزله (قطع)"], ["اتعمله استيدج (توتات)"], ["على بالتات (توتات)"], ["بالتات"], ["في الدروب زون (توتات)"], ["أقدم توت فاضل"], ["لسه جاي (قطع)"]])
+      + `<tbody>${rows.map((r) => `<tr><td class="mono"><b>${esc(r.code)}</b></td><td>${esc(names[r.code] || "")}</td>
+        <td class="num">${r.sorted ? fmt(r.sorted) : "—"}</td><td class="num" style="color:var(--green)"><b>${r.staged ? fmt(r.staged) : "—"}</b></td>
+        <td class="num">${r.palletTotes ? fmt(r.palletTotes) : "—"}</td><td class="num muted">${r.pallets.size || "—"}</td>
+        <td class="num" style="color:var(--amber)"><b>${r.drop ? fmt(r.drop) : "—"}</b></td>
+        <td class="num ${r.oldest >= hot ? "age-hot" : r.oldest >= hot / 2 ? "age-warm" : ""}">${r.drop ? duration(r.oldest * 60) : "—"}</td>
+        <td class="num">${r.expected ? fmt(r.expected) : "—"}</td></tr>`).join("")}</tbody>`
+      + `<tfoot><tr><td>الإجمالي</td><td></td><td class="num">${fmt(total("sorted"))}</td><td class="num">${fmt(total("staged"))}</td><td class="num">${fmt(total("palletTotes"))}</td>
+        <td class="num">${fmt(total("pallets"))}</td><td class="num">${fmt(total("drop"))}</td><td></td><td class="num">${fmt(total("expected"))}</td></tr></tfoot>`
+    : emptyRow(9, "مفيش داتا للفروع");
+}
+
+// ---------- Archive ----------
+// One row per day: the sync replaces today's row every run, so past days keep their last numbers.
+function renderArchive() {
+  const scope = state.archiveScope;
+  const mc = new Map(state.archive.mc.filter((r) => r.scope === scope).map((r) => [r.day, r]));
+  const xd = new Map(state.archive.xdock.filter((r) => r.scope === (scope === "ALL" ? "ALL" : scope)).map((r) => [r.day, r]));
+  const pal = new Map(state.archive.xdock.filter((r) => r.scope === "ALL").map((r) => [r.day, r]));
+  const days = [...new Set([...mc.keys(), ...xd.keys()])].filter(Boolean).sort().reverse();
+  const rows = days.map((d) => {
+    const m = mc.get(d) || {};
+    const x = xd.get(d) || {};
+    return { day: d, sorted: num(m.batch_sorted), pbs: num(m.batch_pbs_closed), loss: num(m.batch_loss), left: num(m.batch_left), total: num(m.batch_total),
+      staged: num(m.staged_totes), drop: num(m.pending_staging_totes), xdock: num(x.xdock_lines_put), xdockLeft: num(x.xdock_lines_left),
+      palletTotes: num((pal.get(d) || {}).pallet_totes), pallets: num((pal.get(d) || {}).pallets), at: m.updated_at || x.updated_at || "" };
+  });
+  const max = (key) => Math.max(1, ...rows.map((r) => r[key]));
+  const bar = (v, key, color) => `<span class="pct"><i style="width:90px"><b style="width:${(v / max(key)) * 100}%;background:${color}"></b></i>${fmt(v)}</span>`;
+  const last7 = rows.slice(0, 7);
+  const avg = (key) => (last7.length ? last7.reduce((s, r) => s + r[key], 0) / last7.length : 0);
+  $("archiveKpis").innerHTML = rows.length ? [
+    mcCard("متوسط آخر 7 أيام · سورت باتش", fmt(avg("sorted")), null, "", ["قطعة في اليوم"]),
+    mcCard("متوسط آخر 7 أيام · استيدج", fmt(avg("staged")), null, "", ["توت في اليوم"]),
+    mcCard("متوسط آخر 7 أيام · اكس دوك", fmt(avg("xdock")), null, "", ["لاين في اليوم"]),
+  ].join("") : "";
+  $("archiveTable").innerHTML = rows.length
+    ? head(["اليوم", "سورت باتش (قطع)", ["PBs"], ["ناقص + سكيب"], ["فاضل آخر اليوم"], "استيدج (توتات)", ["على بالتات"], ["بالتات"], ["دروب زون آخر اليوم"], "اكس دوك (لاينز)", ["اكس دوك فاضل"], "آخر تحديث"])
+      + `<tbody>${rows.map((r) => `<tr><td class="mono"><b>${r.day}</b></td><td>${bar(r.sorted, "sorted", "var(--yellow)")}</td><td class="num muted">${fmt(r.pbs)}</td>
+        <td class="num ${r.loss ? "age-warm" : "muted"}">${fmt(r.loss)}</td><td class="num">${fmt(r.left)}</td><td>${bar(r.staged, "staged", "var(--green)")}</td>
+        <td class="num">${fmt(r.palletTotes)}</td><td class="num muted">${fmt(r.pallets)}</td><td class="num">${fmt(r.drop)}</td>
+        <td>${bar(r.xdock, "xdock", "var(--blue)")}</td><td class="num">${fmt(r.xdockLeft)}</td><td class="mono muted">${esc(r.at)}</td></tr>`).join("")}</tbody>`
+    : emptyRow(12, "الأرشيف بيبدأ يتملا من أول تحديث بعد ما الـ Apps Script الجديد يشتغل");
 }
 
 // ---------- Alerts ----------
@@ -996,6 +1099,8 @@ function render() {
   if (page === "batch") renderBatch();
   else if (page === "xdock") renderXdock();
   else if (page === "hourly") renderHourly();
+  else if (page === "stores") renderStores();
+  else if (page === "archive") renderArchive();
   else renderStaging();
 }
 
@@ -1015,6 +1120,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bindChips("xdockStatus", "xdockStatus", "status");
   $("batchWh").addEventListener("change", (event) => { state.batchWh = event.target.value; render(); });
   bindChips("ippKind", "ippKind", "kind");
+  bindChips("ippShift", "ippShift", "shift");
+  bindChips("archiveScope", "archiveScope", "scope");
+  $("storesWh").addEventListener("change", (event) => { state.storesWh = event.target.value; render(); });
+  $("storesSearch").addEventListener("input", (event) => { state.storesSearch = event.target.value.trim(); renderStores(); });
   $("ippExport").addEventListener("click", () => {
     downloadCsv(`ipp_${state.ippKind}_${state.hourlyDay}_${hourLabel(state.hourlyFrom)}-${hourLabel(state.hourlyTo)}.csv`.replace(/:/g, ""),
       ["person", "name", "warehouse", "jobs", state.ippKind === "batch" ? "qty_sorted" : "lines_put_away", "work_minutes", "ipp", "missing_skipped", "first", "last"],

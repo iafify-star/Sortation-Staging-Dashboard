@@ -8,8 +8,8 @@
     <link rel="icon" type="image/png" href="assets/noon-minutes-logo.png">
     <title>نون مينتس | السورتشن والاستيدج</title>
     <script>try { if (localStorage.getItem("stageTheme") === "light") document.documentElement.dataset.theme = "light"; } catch (error) {}</script>
-    <link rel="stylesheet" href="styles.css?v=22">
-    <script src="app.js?v=23" defer></script>
+    <link rel="stylesheet" href="styles.css?v=24">
+    <script src="app.js?v=24" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -23,7 +23,9 @@
           <a class="nav-link active" href="#batch" data-page="batch"><span class="nav-icon">⇅</span><span>السورتنج باتش</span></a>
           <a class="nav-link" href="#xdock" data-page="xdock"><span class="nav-icon">⇄</span><span>السورتشن اكس دوك</span></a>
           <a class="nav-link" href="#staging" data-page="staging"><span class="nav-icon">▦</span><span>الاستيدج</span></a>
+          <a class="nav-link" href="#stores" data-page="stores"><span class="nav-icon">⌂</span><span>الفروع</span></a>
           <a class="nav-link" href="#hourly" data-page="hourly"><span class="nav-icon">◷</span><span>تقرير بالساعة</span></a>
+          <a class="nav-link" href="#archive" data-page="archive"><span class="nav-icon">▤</span><span>الأرشيف</span></a>
         </nav>
         <div class="sidebar-spacer"></div>
         <div class="source-card">
@@ -190,11 +192,59 @@
                   <button type="button" class="chip" data-kind="xdock">الاكس دوك</button>
                   <button type="button" class="chip" data-kind="staging">الاستيدج</button>
                 </div>
+                <div class="chips" id="ippShift" role="group" aria-label="الشيفت">
+                  <button type="button" class="chip active" data-shift="all">كل الشيفتات</button>
+                  <button type="button" class="chip" data-shift="night">ليل</button>
+                  <button type="button" class="chip" data-shift="morning">صباحي</button>
+                  <button type="button" class="chip" data-shift="middle">ميدل</button>
+                </div>
                 <button class="ghost-button" id="ippExport" type="button">⬇ Excel</button>
               </div>
             </div>
             <div class="table-foot" id="ippNote"></div>
             <div class="table-wrap tall"><table id="ippTable"></table></div>
+          </div>
+        </section>
+
+        <!-- Branches -->
+        <section class="page" id="page-stores" hidden>
+          <div class="page-head">
+            <div>
+              <h1>الفروع</h1>
+              <p>النهارده لكل فرع: اتفرزله كام، واتعمله استيدج كام، واتقفل على بالتات كام، ولسه فاضله كام</p>
+            </div>
+            <div class="filters">
+              <label class="select"><span>المخزن</span><select id="storesWh"></select></label>
+              <input class="search" id="storesSearch" type="search" placeholder="دوّر بكود أو اسم الفرع">
+            </div>
+          </div>
+          <div class="mc-grid four" id="storesKpis"></div>
+          <div class="panel">
+            <div class="panel-head"><h2>كل فرع</h2><small>الأول اللي ليه توتات أكتر في الدروب زون · لسه جاي = Expected Load من Minutes Central</small></div>
+            <div class="table-wrap tall"><table id="storesTable"></table></div>
+          </div>
+        </section>
+
+        <!-- Archive -->
+        <section class="page" id="page-archive" hidden>
+          <div class="page-head">
+            <div>
+              <h1>الأرشيف</h1>
+              <p>آخر أرقام كل يوم · بيتسجل لوحده مع التحديث كل نص ساعة</p>
+            </div>
+            <div class="filters">
+              <div class="chips" id="archiveScope" role="group" aria-label="المخزن">
+                <button type="button" class="chip active" data-scope="ALL">CAIID01، 02، 06</button>
+                <button type="button" class="chip" data-scope="CAIID01">CAIID01</button>
+                <button type="button" class="chip" data-scope="CAIID02">CAIID02</button>
+                <button type="button" class="chip" data-scope="CAIID06">CAIID06</button>
+              </div>
+            </div>
+          </div>
+          <div class="mc-grid" id="archiveKpis"></div>
+          <div class="panel">
+            <div class="panel-head"><h2>كل يوم</h2><small>الاكس دوك في "CAIID01، 02، 06" = CAIID06 و CAIID07 مع بعض</small></div>
+            <div class="table-wrap tall"><table id="archiveTable"></table></div>
           </div>
         </section>
 
