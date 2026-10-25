@@ -10,6 +10,7 @@ const TABS = {
     ["mc_staging_summary", "1274872084"],
     ["mc_staging_history", "1490472776"],
     ["gt_pending_dispatching", "1330038502"],
+    ["mc_staged_log", "1049470815"],
   ],
 };
 // Names come from the NIM attendance sheet (CAIID01 tab): its IDs (MAK01980M) share their first 8 characters with the
@@ -661,6 +662,13 @@ function stagingSnapshots() {
     left: num(r.pending_staging_totes),
   })).filter((r) => r.at != null).sort((a, b) => a.at - b.at);
 }
+// mc_staged_log holds each tote once with when and by whom it was staged (Minutes Central's staging locations,
+// collected every hour). A tote staged and closed on a pallet between two syncs never shows up there.
+function stagedLog() {
+  return ((state.staging[5] && state.staging[5].records) || []).filter((r) => r.tote).map((r) => ({
+    tote: r.tote, wh: r.warehouse, location: r.staging_location, store: r.darkstore_code, qty: num(r.qty), at: parseTime(r.staged_at), by: r.staged_by,
+  })).filter((r) => r.at != null);
+}
 function hourlyRows() {
   const events = [
     ...state.batch.filter((j) => j.status === "closed" && j.completed != null && hourlyWhOk(j.wh))
@@ -677,17 +685,25 @@ function hourlyRows() {
     const r = rows[hourOf(e.at)];
     if (e.kind === "batch") { r.batchJobs += 1; r.batchQty += e.qty; } else { r.xdockJobs += 1; r.xdockQty += e.qty; }
   }
-  // The last snapshot in each hour is the staged-so-far count at that hour's end.
-  let previous = 0;
-  for (const s of snapshots.filter((x) => dayKey(x.at) === state.hourlyDay)) rows[hourOf(s.at)].stagedTotal = s.staged;
-  for (const r of rows) {
-    if (r.stagedTotal == null) continue;
-    r.staged = Math.max(0, r.stagedTotal - previous);
-    previous = r.stagedTotal;
+  // Staging per hour comes from each tote's staged time in the log; days before the log started fall back to the
+  // hourly snapshots, where the last snapshot in each hour is the staged-so-far count at that hour's end.
+  const logged = stagedLog().filter((t) => dayKey(t.at) === state.hourlyDay && hourlyWhOk(t.wh));
+  if (logged.length) {
+    logged.forEach((t) => { const r = rows[hourOf(t.at)]; r.staged = (r.staged || 0) + 1; r.stagedQty = (r.stagedQty || 0) + t.qty; });
+    let running = 0;
+    rows.forEach((r) => { running += r.staged || 0; if (r.staged) r.stagedTotal = running; });
+  } else {
+    let previous = 0;
+    for (const s of snapshots.filter((x) => dayKey(x.at) === state.hourlyDay)) rows[hourOf(s.at)].stagedTotal = s.staged;
+    for (const r of rows) {
+      if (r.stagedTotal == null) continue;
+      r.staged = Math.max(0, r.stagedTotal - previous);
+      previous = r.stagedTotal;
+    }
   }
   const lo = Math.min(state.hourlyFrom, state.hourlyTo);
   const hi = Math.max(state.hourlyFrom, state.hourlyTo);
-  return { days, rows: rows.filter((r) => r.h >= lo && r.h <= hi), snapshots };
+  return { days, rows: rows.filter((r) => r.h >= lo && r.h <= hi), snapshots, fromLog: logged.length > 0 };
 }
 
 function renderHourly() {
@@ -700,7 +716,7 @@ function renderHourly() {
   $("hourlyFrom").value = state.hourlyFrom;
   $("hourlyTo").value = state.hourlyTo;
 
-  const { days, rows, snapshots } = hourlyRows();
+  const { days, rows, snapshots, fromLog } = hourlyRows();
   $("hourlyDay").innerHTML = days.length ? days.map((d) => `<option value="${d}">${d.slice(5).replace("-", "/")}</option>`).join("") : `<option value="">—</option>`;
   $("hourlyDay").value = state.hourlyDay;
 
@@ -723,9 +739,9 @@ function renderHourly() {
   const dayShots = snapshots.filter((s) => dayKey(s.at) === state.hourlyDay);
   const before = dayShots.filter((s) => hourOf(s.at) < lo).pop();
   const upTo = dayShots.filter((s) => hourOf(s.at) <= hi).pop();
-  const stagedRange = upTo ? upTo.staged - (before ? before.staged : 0) : null;
-  // With no snapshot before the chosen start hour, the count reaches back to midnight and cannot be split.
-  const fromMidnight = upTo && !before && lo > 0;
+  // From the log, the hours add up exactly; from snapshots, a range with no snapshot before its start reaches back to midnight.
+  const stagedRange = fromLog ? sum("staged") : upTo ? upTo.staged - (before ? before.staged : 0) : null;
+  const fromMidnight = !fromLog && upTo && !before && lo > 0;
   const stagedDay = dayShots.length ? dayShots[dayShots.length - 1].staged : 0;
   const stagingLeft = latest ? latest.left : 0;
   const card = (label, done, unit, left, dayDone, extra) => mcCard(label, done == null ? "—" : fmt(done), dayDone + left ? pct(dayDone, dayDone + left) : null, "good",
@@ -736,19 +752,21 @@ function renderHourly() {
     card("Sort Cross Dock · لاينز", sum("xdockQty"), "لاين", xdockLeft, xdockDay, [["جوبز فاضلة", fmt(xdockOpen.length)]]),
     stagingScope()
       ? card("Staging · توتات", stagedRange, "توت", stagingLeft, stagedDay, [["آخر تسجيل", latest ? dayClock(latest.at) : "—"],
+        ...(fromLog ? [["المصدر", "وقت Staged At لكل توت"]] : []),
         ...(fromMidnight ? [["تنبيه", `محسوب من 12 بالليل، مفيش تسجيل قبل ${hourLabel(lo)}`]] : [])])
       : mcCard("Staging · توتات", "—", null, "", ["الاستيدج متسجل لـ CAIID01 و02 و06 بس"]),
   ].join("");
 
   const cell = (v) => (v ? fmt(v) : "—");
-  $("hourlyTable").innerHTML = head(["الساعة", ["سورت باتش (قطع)"], ["PBs اتقفلت"], ["سورت اكس دوك (لاينز)"], ["جوبز اكس دوك"], ["استيدج (توتات)"], ["استيدج لحد الساعة دي"], "الشيفت"])
+  $("hourlyTable").innerHTML = head(["الساعة", ["سورت باتش (قطع)"], ["PBs اتقفلت"], ["سورت اكس دوك (لاينز)"], ["جوبز اكس دوك"], ["استيدج (توتات)"], ["استيدج (قطع)"], ["استيدج لحد الساعة دي"], "الشيفت"])
     + `<tbody>${rows.map((r) => `<tr><td class="mono"><b>${hourLabel(r.h)}</b></td>
       <td class="num"><b>${cell(r.batchQty)}</b></td><td class="num muted">${cell(r.batchJobs)}</td>
       <td class="num"><b>${cell(r.xdockQty)}</b></td><td class="num muted">${cell(r.xdockJobs)}</td>
-      <td class="num"><b>${r.staged == null ? "—" : fmt(r.staged)}</b></td><td class="num muted">${r.stagedTotal == null ? "—" : fmt(r.stagedTotal)}</td>
+      <td class="num"><b>${r.staged == null ? "—" : fmt(r.staged)}</b></td><td class="num muted">${r.stagedQty ? fmt(r.stagedQty) : "—"}</td>
+      <td class="num muted">${r.stagedTotal == null ? "—" : fmt(r.stagedTotal)}</td>
       <td class="muted">${SHIFT_LABELS[shiftOf(Date.UTC(2000, 0, 1, r.h))]}</td></tr>`).join("")}</tbody>`
     + `<tfoot><tr><td>الإجمالي</td><td class="num">${fmt(sum("batchQty"))}</td><td class="num">${fmt(sum("batchJobs"))}</td>
-      <td class="num">${fmt(sum("xdockQty"))}</td><td class="num">${fmt(sum("xdockJobs"))}</td><td class="num">${stagedRange == null ? "—" : fmt(stagedRange)}</td><td></td><td></td></tr></tfoot>`;
+      <td class="num">${fmt(sum("xdockQty"))}</td><td class="num">${fmt(sum("xdockJobs"))}</td><td class="num">${stagedRange == null ? "—" : fmt(stagedRange)}</td><td class="num">${fmt(sum("stagedQty"))}</td><td></td><td></td></tr></tfoot>`;
   renderIpp();
 }
 
@@ -785,6 +803,24 @@ function ippRows() {
       if (j.started != null) p.spans.push([j.started, j.completed]);
       p.first = Math.min(p.first, j.started ?? j.completed); p.last = Math.max(p.last, j.completed);
     }
+  } else if (state.ippKind === "staging") {
+    // A person's time is the gaps between their consecutive staged totes, counting gaps of up to 30 minutes as work.
+    const byUser = new Map();
+    for (const t of stagedLog()) {
+      if (!t.by || !whOk(t.wh) || !inRange(t.at)) continue;
+      if (!byUser.has(t.by)) byUser.set(t.by, []);
+      byUser.get(t.by).push(t);
+    }
+    for (const [name, totes] of byUser) {
+      totes.sort((a, b) => a.at - b.at);
+      totes.forEach((t, i) => {
+        const p = person(name, t.wh);
+        p.jobs += 1; p.qty += t.qty;
+        const prev = totes[i - 1];
+        if (prev && t.at - prev.at <= 30 * 60000) p.spans.push([prev.at, t.at]);
+        p.first = Math.min(p.first, t.at); p.last = Math.max(p.last, t.at);
+      });
+    }
   } else {
     const byUser = new Map();
     for (const j of state.xdock) {
@@ -808,20 +844,25 @@ function ippRows() {
   }
   return [...people.values()].map((p) => {
     const minutes = mergedMinutes(p.spans);
-    return { ...p, minutes, ipp: minutes >= 5 ? p.qty / (minutes / 60) : null };
+    // Staging is counted in totes per hour; the other two in units per hour.
+    const amount = state.ippKind === "staging" ? p.jobs : p.qty;
+    return { ...p, minutes, ipp: minutes >= 5 ? amount / (minutes / 60) : null };
   }).sort((a, b) => (b.ipp ?? -1) - (a.ipp ?? -1) || b.qty - a.qty);
 }
 function renderIpp() {
   const rows = ippRows();
-  const unit = state.ippKind === "batch" ? "قطع اتفرزت" : "لاينز اتحطت";
+  const staging = state.ippKind === "staging";
+  const unit = state.ippKind === "batch" ? "قطع اتفرزت" : staging ? "قطع" : "لاينز اتحطت";
   $("ippNote").textContent = state.ippKind === "batch"
     ? "IPP = القطع اللي اتفرزت ÷ ساعات الشغل (من بداية كل جوب لقفله، من غير ما الجوبز اللي شغالة مع بعض تتحسب مرتين) · الجوبز المقفولة في الفترة المختارة"
-    : "IPP تقريبي: تقرير الاكس دوك مافيهوش وقت القفل، فالجوب بيتحسب لحد ما الشخص يبدأ الجوب اللي بعده (بحد أقصى ساعتين) · الجوبز اللي بدأت في الفترة المختارة";
+    : staging
+      ? "IPP = توتات في الساعة: التوتات اللي عملها استيدج (Staged By) ÷ وقت شغله (الفرق بين كل توت واللي بعده لو أقل من 30 دقيقة) · من وقت Staged At"
+      : "IPP تقريبي: تقرير الاكس دوك مافيهوش وقت القفل، فالجوب بيتحسب لحد ما الشخص يبدأ الجوب اللي بعده (بحد أقصى ساعتين) · الجوبز اللي بدأت في الفترة المختارة";
   const valid = rows.filter((r) => r.ipp != null);
-  const totalQty = valid.reduce((s, r) => s + r.qty, 0);
+  const totalQty = valid.reduce((s, r) => s + (staging ? r.jobs : r.qty), 0);
   const totalHours = valid.reduce((s, r) => s + r.minutes, 0) / 60;
   $("ippTable").innerHTML = rows.length
-    ? head(["#", "الشخص", "المخزن", ["جوبز"], [unit], ["ساعات الشغل"], ["IPP"], ["ناقص + سكيب"], "أول ← آخر"])
+    ? head(["#", "الشخص", "المخزن", [staging ? "توتات" : "جوبز"], [unit], ["ساعات الشغل"], [staging ? "IPP (توت/ساعة)" : "IPP"], ["ناقص + سكيب"], "أول ← آخر"])
       + `<tbody>${rows.map((r, i) => `<tr><td class="muted">${i + 1}</td><td>${who(r.name)}</td><td>${esc([...r.wh].sort().join("، "))}</td>
         <td class="num">${fmt(r.jobs)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${duration(r.minutes)}</td>
         <td class="num"><b style="color:var(--yellow)">${r.ipp == null ? "—" : fmt(r.ipp)}</b></td>
@@ -830,7 +871,7 @@ function renderIpp() {
       + `<tfoot><tr><td></td><td>المتوسط</td><td></td><td class="num">${fmt(rows.reduce((s, r) => s + r.jobs, 0))}</td>
         <td class="num">${fmt(rows.reduce((s, r) => s + r.qty, 0))}</td><td class="num">${duration(totalHours * 60)}</td>
         <td class="num"><b>${totalHours ? fmt(totalQty / totalHours) : "—"}</b></td><td class="num">${fmt(rows.reduce((s, r) => s + r.loss, 0))}</td><td></td></tr></tfoot>`
-    : emptyRow(9, "مفيش جوبز مقفولة في الفترة دي");
+    : emptyRow(9, staging ? "مفيش توتات اتعملها استيدج في الفترة دي" : "مفيش جوبز مقفولة في الفترة دي");
 }
 
 // ---------- Page switching & events ----------

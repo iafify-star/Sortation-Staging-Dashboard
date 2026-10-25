@@ -9,7 +9,7 @@
     <title>نون مينتس | السورتشن والاستيدج</title>
     <script>try { if (localStorage.getItem("stageTheme") === "light") document.documentElement.dataset.theme = "light"; } catch (error) {}</script>
     <link rel="stylesheet" href="styles.css?v=15">
-    <script src="app.js?v=20" defer></script>
+    <script src="app.js?v=21" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -176,7 +176,7 @@
           <div class="mc-grid" id="hourlyKpis"></div>
 
           <div class="panel">
-            <div class="panel-head"><h2 id="hourlyTitle">كل ساعة</h2><small>سورت باتش حسب وقت قفل الجوب · اكس دوك حسب وقت بداية الجوب · الاستيدج من تسجيل كل ساعة</small></div>
+            <div class="panel-head"><h2 id="hourlyTitle">كل ساعة</h2><small>سورت باتش حسب وقت قفل الجوب · اكس دوك حسب وقت بداية الجوب · الاستيدج من وقت Staged At لكل توت</small></div>
             <div class="table-wrap tall"><table id="hourlyTable"></table></div>
           </div>
 
@@ -187,6 +187,7 @@
                 <div class="chips" id="ippKind">
                   <button type="button" class="chip active" data-kind="batch">السورتنج باتش</button>
                   <button type="button" class="chip" data-kind="xdock">الاكس دوك</button>
+                  <button type="button" class="chip" data-kind="staging">الاستيدج</button>
                 </div>
                 <button class="ghost-button" id="ippExport" type="button">⬇ Excel</button>
               </div>
