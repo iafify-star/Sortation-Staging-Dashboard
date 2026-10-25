@@ -9,6 +9,7 @@ const TABS = {
     ["mc_pending_staging", "1185436744"],
     ["mc_staging_summary", "1274872084"],
     ["mc_staging_history", "1490472776"],
+    ["gt_pending_dispatching", "1330038502"],
   ],
 };
 // Names come from the NIM attendance sheet (CAIID01 tab): its IDs (MAK01980M) share their first 8 characters with the
@@ -506,6 +507,15 @@ function renderXdock() {
 // ---------- Staging ----------
 // From Minutes Central's Staging page: mc_staging has one row per staging location (what is already staged),
 // mc_pending_staging has one row per tote still waiting in the drop zone (not staged yet).
+// gt_pending_dispatching (grocery-tools Pending Dispatching) has the totes closed on pallets. Minutes Central's Pending
+// Release already counts today's staged totes including the ones since closed on pallets (only ~800 totes sit in staging
+// locations at a time, fewer than Pending Release), so pallet totes are shown as a part of it, never added on top.
+function palletTotesToday() {
+  const today = dayKey(cairoNow());
+  return ((state.staging[4] && state.staging[4].records) || []).filter((r) => r.tote).map((r) => ({
+    wh: r.warehouse, tote: r.tote, pallet: r.pallet, store: r.darkstore_code, qty: num(r.items), at: parseTime(r.pallet_created_at),
+  })).filter((r) => r.at != null && dayKey(r.at) === today);
+}
 function stagingData() {
   const [locations, pending, summary] = state.staging.map((tab) => tab.records || []);
   const wh = (r) => state.stagingWh === "all" || r.warehouse === state.stagingWh;
@@ -519,6 +529,7 @@ function stagingData() {
       wh: r.warehouse, tote: r.tote, store: r.darkstore_code, dropzone: r.dropzone_location, zone: r.picking_zone, by: r.dropped_by,
       at: parseTime(r.dropped_at), age: num(r.age_hours), qty: num(r.qty), suggested: r.suggested_staging_locations,
     })),
+    onPallet: palletTotesToday(),
     inWh: wh,
   };
 }
@@ -533,6 +544,7 @@ function renderStaging() {
 
   const locations = data.locations.filter(data.inWh);
   const pending = data.pending.filter(data.inWh);
+  const onPallet = data.onPallet.filter(data.inWh);
   const done = qtyOf(locations);
   const left = qtyOf(pending);
   const total = done + left;
@@ -545,10 +557,10 @@ function renderStaging() {
         [["0–2 ساعة", fmt(n("release_0_2_qty"))], ["2–4 ساعات", fmt(n("release_2_4_qty"))], ["أكتر من 4", fmt(n("release_gt4_qty"))]]),
       mcCard("Pending Staging Qty", fmt(n("staging_qty")), null, "", [`${fmt(n("staging_ds"))} DS`, `${fmt(n("staging_totes"))} Totes`],
         [["0–2 ساعة", fmt(n("staging_0_2_qty"))], ["2–4 ساعات", fmt(n("staging_2_4_qty"))], ["أكتر من 4", fmt(n("staging_gt4_qty"))]]),
-      // Staged so far today = the totes now in staging locations (Pending Release); out of those plus the ones still waiting.
+      // Staged today = Pending Release totes; out of those plus Pending Staging. Today's pallets are a part of it.
       mcCard("Staged Totes · اتعمل استيدج", fmt(n("release_totes")), pct(n("release_totes"), n("release_totes") + n("staging_totes")), "good",
         [`من ${fmt(n("release_totes") + n("staging_totes"))} توت`, `فاضل ${fmt(n("staging_totes"))} توت`],
-        [["اتعمل (قطع)", fmt(n("release_qty"))], ["فاضل (قطع)", fmt(n("staging_qty"))]]),
+        [["منهم اتقفل على بالتات النهارده", `${fmt(onPallet.length)} توت · ${fmt(new Set(onPallet.map((r) => r.pallet)).size)} بالتة`], ["اتعمل (قطع)", fmt(n("release_qty"))]]),
       mcCard("Expected Load", fmt(n("expected_load")), null, "", [],
         [["في السورتنج", fmt(n("load_in_sorting"))], ["في الدروب زون", fmt(n("load_in_dropzone"))], ["في البيكينج", fmt(n("load_in_picking"))]]),
     ].join("")
@@ -567,19 +579,21 @@ function renderStaging() {
   ].join("");
 
   // Per warehouse, always every warehouse so they can be compared.
-  const cells = (locs, pend) => {
+  const cells = (locs, pend, pals) => {
     const d = totesOf(locs);
     const l = pend.length;
     return `<td class="num">${fmt(d + l)}</td><td class="num" style="color:var(--green)"><b>${fmt(d)}</b></td>
+    <td class="num muted">${fmt(pals.length)}</td>
     <td class="num" style="color:var(--amber)"><b>${fmt(l)}</b></td><td class="num">${pctCell(pct(d, d + l))}</td>
     <td class="num muted">${fmt(qtyOf(locs))}</td><td class="num muted">${fmt(qtyOf(pend))}</td>`;
   };
+  const byWh = (list, w) => list.filter((r) => r.wh === w);
   $("stagingWhTable").innerHTML = warehouses.length
-    ? head(["المخزن", ["إجمالي التوتات"], ["توتات اتعملت"], ["توتات فاضلة"], ["نسبة الإنجاز"], ["قطع اتعملت"], ["قطع فاضلة"]])
+    ? head(["المخزن", ["إجمالي التوتات"], ["اتعمل استيدج"], ["منهم اتقفل على بالتة"], ["فاضل"], ["نسبة الإنجاز"], ["قطع اتعملت"], ["قطع فاضلة"]])
       + `<tbody>${warehouses.map((w) => `<tr${w === state.stagingWh ? ' style="background:var(--row-hover)"' : ""}><td><b>${esc(w)}</b></td>
-        ${cells(data.locations.filter((r) => r.wh === w), data.pending.filter((r) => r.wh === w))}</tr>`).join("")}</tbody>`
-      + (warehouses.length > 1 ? `<tfoot><tr><td>الإجمالي</td>${cells(data.locations, data.pending)}</tr></tfoot>` : "")
-    : emptyRow(7, "لسه مفيش داتا استيدج");
+        ${cells(byWh(data.locations, w), byWh(data.pending, w), byWh(data.onPallet, w))}</tr>`).join("")}</tbody>`
+      + (warehouses.length > 1 ? `<tfoot><tr><td>الإجمالي</td>${cells(data.locations, data.pending, data.onPallet)}</tr></tfoot>` : "")
+    : emptyRow(8, "لسه مفيش داتا استيدج");
 
   // Per store
   const stores = new Map();
@@ -641,8 +655,11 @@ const stagingScope = () => (state.hourlyWh === "main" || state.hourlyWh === "all
 function stagingSnapshots() {
   const scope = stagingScope();
   const history = (state.staging[3] && state.staging[3].records) || [];
-  return history.filter((r) => r.scope === scope).map((r) => ({ at: parseTime(r.at), staged: num(r.staged_totes), left: num(r.pending_staging_totes) }))
-    .filter((r) => r.at != null).sort((a, b) => a.at - b.at);
+  return history.filter((r) => r.scope === scope).map((r) => ({
+    at: parseTime(r.at),
+    staged: r.release_card_totes !== undefined && r.release_card_totes !== "" ? num(r.release_card_totes) : num(r.staged_totes),
+    left: num(r.pending_staging_totes),
+  })).filter((r) => r.at != null).sort((a, b) => a.at - b.at);
 }
 function hourlyRows() {
   const events = [
