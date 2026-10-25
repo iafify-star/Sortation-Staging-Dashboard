@@ -551,21 +551,31 @@ function renderStaging() {
     : `<div class="empty">مفيش ملخص استيدج</div>`;
   $("stagingSummaryTime").textContent = s && s.updated_at ? `Minutes Central · ${s.updated_at}` : "";
 
+  // Totes lead; quantities sit underneath. Staged totes are each location's count, left totes are one row each.
+  const totesOf = (list) => list.reduce((s, r) => s + r.totes, 0);
+  const doneTotes = totesOf(locations);
+  const leftTotes = pending.length;
+  const allTotes = doneTotes + leftTotes;
   $("stagingKpis").innerHTML = [
-    kpi("إجمالي الكمية", fmt(total), "اللي اتعمل + اللي فاضل", "var(--yellow)"),
-    kpi("اتعمل استيدج", fmt(done), `${pct(done, total).toFixed(0)}% من الإجمالي`, "var(--green)", pct(done, total)),
-    kpi("فاضل", fmt(left), `${pct(left, total).toFixed(0)}% من الإجمالي`, "var(--amber)", pct(left, total)),
+    kpi("إجمالي التوتات", fmt(allTotes), `${fmt(total)} قطعة · اللي اتعمل + اللي فاضل`, "var(--yellow)"),
+    kpi("اتعمل استيدج (توتات)", fmt(doneTotes), `${pct(doneTotes, allTotes).toFixed(0)}% · ${fmt(done)} قطعة`, "var(--green)", pct(doneTotes, allTotes)),
+    kpi("فاضل (توتات)", fmt(leftTotes), `${pct(leftTotes, allTotes).toFixed(0)}% · ${fmt(left)} قطعة`, "var(--amber)", pct(leftTotes, allTotes)),
   ].join("");
 
   // Per warehouse, always every warehouse so they can be compared.
-  const cells = (d, l) => `<td class="num">${fmt(d + l)}</td><td class="num" style="color:var(--green)"><b>${fmt(d)}</b></td>
-    <td class="num" style="color:var(--amber)"><b>${fmt(l)}</b></td><td class="num">${pctCell(pct(d, d + l))}</td>`;
+  const cells = (locs, pend) => {
+    const d = totesOf(locs);
+    const l = pend.length;
+    return `<td class="num">${fmt(d + l)}</td><td class="num" style="color:var(--green)"><b>${fmt(d)}</b></td>
+    <td class="num" style="color:var(--amber)"><b>${fmt(l)}</b></td><td class="num">${pctCell(pct(d, d + l))}</td>
+    <td class="num muted">${fmt(qtyOf(locs))}</td><td class="num muted">${fmt(qtyOf(pend))}</td>`;
+  };
   $("stagingWhTable").innerHTML = warehouses.length
-    ? head(["المخزن", ["إجمالي الكمية"], ["اتعمل استيدج"], ["فاضل"], ["نسبة الإنجاز"]])
+    ? head(["المخزن", ["إجمالي التوتات"], ["توتات اتعملت"], ["توتات فاضلة"], ["نسبة الإنجاز"], ["قطع اتعملت"], ["قطع فاضلة"]])
       + `<tbody>${warehouses.map((w) => `<tr${w === state.stagingWh ? ' style="background:var(--row-hover)"' : ""}><td><b>${esc(w)}</b></td>
-        ${cells(qtyOf(data.locations.filter((r) => r.wh === w)), qtyOf(data.pending.filter((r) => r.wh === w)))}</tr>`).join("")}</tbody>`
-      + (warehouses.length > 1 ? `<tfoot><tr><td>الإجمالي</td>${cells(qtyOf(data.locations), qtyOf(data.pending))}</tr></tfoot>` : "")
-    : emptyRow(5, "لسه مفيش داتا استيدج");
+        ${cells(data.locations.filter((r) => r.wh === w), data.pending.filter((r) => r.wh === w))}</tr>`).join("")}</tbody>`
+      + (warehouses.length > 1 ? `<tfoot><tr><td>الإجمالي</td>${cells(data.locations, data.pending)}</tr></tfoot>` : "")
+    : emptyRow(7, "لسه مفيش داتا استيدج");
 
   // Per store
   const stores = new Map();
@@ -693,6 +703,8 @@ function renderHourly() {
   const before = dayShots.filter((s) => hourOf(s.at) < lo).pop();
   const upTo = dayShots.filter((s) => hourOf(s.at) <= hi).pop();
   const stagedRange = upTo ? upTo.staged - (before ? before.staged : 0) : null;
+  // With no snapshot before the chosen start hour, the count reaches back to midnight and cannot be split.
+  const fromMidnight = upTo && !before && lo > 0;
   const stagedDay = dayShots.length ? dayShots[dayShots.length - 1].staged : 0;
   const stagingLeft = latest ? latest.left : 0;
   const card = (label, done, unit, left, dayDone, extra) => mcCard(label, done == null ? "—" : fmt(done), dayDone + left ? pct(dayDone, dayDone + left) : null, "good",
@@ -702,7 +714,8 @@ function renderHourly() {
     card("Sort Batch · قطع", sum("batchQty"), "قطعة", batchLeft, batchDay, [["PBs فاضلة", fmt(batchOpen.length)]]),
     card("Sort Cross Dock · لاينز", sum("xdockQty"), "لاين", xdockLeft, xdockDay, [["جوبز فاضلة", fmt(xdockOpen.length)]]),
     stagingScope()
-      ? card("Staging · توتات", stagedRange, "توت", stagingLeft, stagedDay, [["آخر تسجيل", latest ? dayClock(latest.at) : "—"]])
+      ? card("Staging · توتات", stagedRange, "توت", stagingLeft, stagedDay, [["آخر تسجيل", latest ? dayClock(latest.at) : "—"],
+        ...(fromMidnight ? [["تنبيه", `محسوب من 12 بالليل، مفيش تسجيل قبل ${hourLabel(lo)}`]] : [])])
       : mcCard("Staging · توتات", "—", null, "", ["الاستيدج متسجل لـ CAIID01 و02 و06 بس"]),
   ].join("");
 
